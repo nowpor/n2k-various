@@ -42,7 +42,7 @@ along with CANboat.  If not, see <http://www.gnu.org/licenses/>.
 #define DST 255
 #define LEN 8
 #define TIMEOUTMS 100
-#define TIMETOSENDPGN 0.50		//in seconds
+#define TIMETOSENDPGN 0.50              //in seconds
 
 static int  openCanDevice(char *device, int *socket);
 static void writeRawPGNToCanSocket(RawMessage *msg, int socket);
@@ -56,7 +56,7 @@ int main(int argc, char **argv)
 {
   //FILE *file = stdin;
   char          msg[2000];
-  int		socket;
+  int           socket;
 
 
   struct can_frame frame;
@@ -77,8 +77,6 @@ int main(int argc, char **argv)
   setbuf(stdout, NULL); //disable buffor for print
 
   RawMessage m;
-  m.data[2]=0;
-  m.data[4]=0;
 
   int sog;
   struct timespec tm;
@@ -87,23 +85,26 @@ int main(int argc, char **argv)
   {
 
         if(readCanFrame(&frame, socket))
-	 if((sog=CheckReadCanFrame(&frame))){
-	   printf ("SOG:%d\n",sog); //sog potrzebny do obliczenia predkosci pozornej wiatru
-	 };
+         if((sog=CheckReadCanFrame(&frame))){
+           printf ("SOG:%d\n",sog); //sog potrzebny do obliczenia predkosci pozornej wiatru
+         };
 
-	clock_gettime(CLOCK_REALTIME,&tm);		//read curent time
-	tscur=tm.tv_nsec/1000000;			//precision i ms
-	tscur/=1000;					//as .ms
-        tscur+=tm.tv_sec;				//sec.ms
+        clock_gettime(CLOCK_REALTIME,&tm);              //read curent time
+        tscur=tm.tv_nsec/1000000;                       //precision i ms
+        tscur/=1000;                                    //as .ms
+        tscur+=tm.tv_sec;                               //sec.ms
 
-	if((tscur-tsold)>TIMETOSENDPGN) //delay is > TIMETOSENDPGN - time send new wind parameter
-	{
-	 tsold=tscur;		//copy CurTime to OldTime
-	 printf(".");
-         sog=101;	//na cwile
-	 ReadAnemometer(sog, &m);	//read data from anemometr
-	 writeRawPGNToCanSocket(&m, socket);	//send wind to can
-	};
+        if((tscur-tsold)>TIMETOSENDPGN) //delay is > TIMETOSENDPGN - time send new wind parameter
+        {
+         tsold=tscur;           //copy CurTime to OldTime
+         printf(".");
+
+         sog=100;       //na chwile
+
+
+         ReadAnemometer(sog, &m);       //read data from anemometr
+         writeRawPGNToCanSocket(&m, socket);    //send wind to can
+        };
 
 
 }
@@ -191,10 +192,10 @@ static int  readCanFrame(struct can_frame *frame, int socket)
    return 0;
   else
    if(read( socket, frame, sizeof(struct can_frame) ) != sizeof(struct can_frame))
-	     {
-		perror("Read");
-		return 0;
-	     }
+             {
+                perror("Read");
+                return 0;
+             }
  return 1;
 }
 
@@ -212,21 +213,19 @@ static int CheckReadCanFrame(struct can_frame *frame)
 {
  unsigned long pgn;
 
- pgn= (frame->can_id >>8);	//decode pgn
- pgn&=0x01FFFF;			//number
+ pgn= (frame->can_id >>8);      //decode pgn
+ pgn&=0x01FFFF;                 //number
 
- if(pgn==129026)		//GPS SOG needed to calculate referece speed wind
-  return (frame->data[5] <<8)+frame->data[4];		//speed over groud
+ if(pgn==129026)                //GPS SOG needed to calculate referece speed wind
+  return (frame->data[5] <<8)+frame->data[4];           //speed over groud
  else
-  return 0;			//not sog
+  return 0;                     //not sog
 }
 
 static void ReadAnemometer(int sog, RawMessage *msg)   //if sog>100 (1m/s) send wind reference on boat else send wind true
 {
    int wind_speed, wind_dir;
 
-   wind_speed=(msg->data[2]<<8)+msg->data[1];
-   wind_dir=(msg->data[4]<<8)+msg->data[3];
 
    msg->prio=PRIO;
    msg->pgn=PGN1;
@@ -234,32 +233,37 @@ static void ReadAnemometer(int sog, RawMessage *msg)   //if sog>100 (1m/s) send 
    msg->dst=DST;
    msg->len=LEN;
    msg->data[0]=0;
-//   msg->data[1]++;		//speed L in  cm/s
-//   msg->data[2]=0;		//speed H
-//   msg->data[3]=0;		//direct L in 0,1 rad *10000
-//   msg->data[4]=0;		//direct H
-   msg->data[5]=4;		//4 - reference dir wind, 3 - true wind
+//   msg->data[1]=0;            //speed L in  cm/s
+//   msg->data[2]=0;            //speed H
+//   msg->data[3]=0;            //direct L in 0,1 rad *10000
+//   msg->data[4]=0;            //direct H
+   msg->data[5]=4;              //4 - reference dir wind, 3 - true wind
    msg->data[6]=0;
    msg->data[7]=0;
-   //read wind and direction from rs (device)
 
-   if(sog>100) {		   //calculate wind speed and direct. true
+   //read wind and direction from rs (device)
+    wind_speed=rand() % 6000;
+    wind_dir=rand();
+
+   if(sog>=100) {                  //calculate wind speed and direct. true when sog > 1m/s
     double wind_dir_rad=wind_dir;
     double wind_dir_true;
     int wind_speed_true;
     wind_dir_rad/=10000;
-    wind_speed_true=sqrt((wind_speed*wind_speed)+(sog*sog)+(2*wind_speed*sog*cos(wind_dir_rad)));
-    wind_dir_true=acos(((wind_speed*cos(wind_dir_rad))+ sog)/wind_speed_true);
-    wind_dir_true/=0.0174532925;
-    printf("\nst:%d,wt:%fl,sr:%lf,wr:%d",wind_speed_true,wind_dir_true,wind_dir_rad,wind_speed);
 
-     msg->data[5]=3;		//true wind
+    wind_dir_true=atan(sin(wind_dir_rad)/((wind_speed/sog)-cos(wind_dir_rad)));
+    wind_speed_true=(sin(wind_dir_rad)/sin(wind_dir_true))*100;
+    wind_dir_true+=wind_dir_rad;
+
+     msg->data[5]=3;            //true wind
+     wind_speed=wind_speed_true; //safe to oryginal var
+     wind_dir=wind_dir_true*10000;
     }
 
- msg->data[1]=(wind_speed & 0x00FF);	//convert wind speed int to 2xchar cm/s
+ msg->data[1]=(wind_speed & 0x00FF);    //convert wind speed int to 2xchar cm/s
  msg->data[2]=(wind_speed >>8);
 
- msg->data[3]=(wind_dir &0x00ff);	//convert wind dir int to 2xchar
+ msg->data[3]=(wind_dir &0x00ff);       //convert wind dir int to 2xchar
  msg->data[4]=(wind_dir >>8);
 }
 

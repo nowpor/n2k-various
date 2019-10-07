@@ -21,6 +21,9 @@ along with CANboat.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 #define _GNU_SOURCE
+
+#include <stdint.h>
+
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
@@ -29,12 +32,11 @@ along with CANboat.  If not, see <http://www.gnu.org/licenses/>.
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-
 #include <math.h>
 
 #define GLOBALS
-#include "common.h"
-#include "pgn.h"
+//#include "common.h"
+//#include "pgn.h"
 
 #define SRC 5
 #define PRIO 2
@@ -44,6 +46,27 @@ along with CANboat.  If not, see <http://www.gnu.org/licenses/>.
 #define TIMEOUTMS 100
 #define TIMETOSENDPGN 0.50              //in seconds
 
+#define DATE_LENGTH 60
+//#define FASTPACKET_SIZE (1)
+#define FASTPACKET_BUCKET_0_SIZE (6)
+#define FASTPACKET_BUCKET_N_SIZE (7)
+//#define FASTPACKET_BUCKET_0_OFFSET (2)
+//#define FASTPACKET_BUCKET_N_OFFSET (1)
+#define FASTPACKET_MAX_INDEX (0x1f)
+#define FASTPACKET_MAX_SIZE (FASTPACKET_BUCKET_0_SIZE + FASTPACKET_BUCKET_N_SIZE * (FASTPACKET_MAX_INDEX - 1))
+
+typedef struct
+{
+  char     timestamp[DATE_LENGTH];
+  uint8_t  prio;
+  uint32_t pgn;
+  uint8_t  dst;
+  uint8_t  src;
+  uint8_t  len;
+  uint8_t  data[FASTPACKET_MAX_SIZE];
+} RawMessage;
+
+unsigned int getCanIdFromISO11783Bits(unsigned int prio, unsigned int pgn, unsigned int src, unsigned int dst);
 static int  openCanDevice(char *device, int *socket);
 static void writeRawPGNToCanSocket(RawMessage *msg, int socket);
 static void sendCanFrame(struct can_frame *frame, int socket);
@@ -62,7 +85,7 @@ int main(int argc, char **argv)
   struct can_frame frame;
   memset(&frame, 0, sizeof(frame));
 
-  setProgName(argv[0]);
+//  setProgName(argv[0]);
   if (argc != 2)
   {
     puts("Usage: socketcan-writer <can-device>");
@@ -155,7 +178,7 @@ static void writeRawPGNToCanSocket(RawMessage *msg, int socket)
 
   if (msg->pgn >= (1 << 18)) // PGNs can't have more than 18 bits, otherwise it overwrites priority bits
   {
-    logError("Invalid PGN, too big (0x%x). Skipping.\n", msg->pgn);
+    //logError("Invalid PGN, too big (0x%x). Skipping.\n", msg->pgn);
     return;
   }
 
@@ -307,3 +330,25 @@ static void sendN2kFastPacket(RawMessage *msg, struct can_frame *frame, int sock
   }
 }
 
+/*
+  This does the opposite from getISO11783BitsFromCanId: given n2k fields produces the extended frame CAN id
+*/
+unsigned int getCanIdFromISO11783Bits(unsigned int prio, unsigned int pgn, unsigned int src, unsigned int dst)
+{
+  unsigned int canId = src | 0x80000000U; // src bits are the lowest ones of the CAN ID. Also set the highest bit to 1 as n2k uses
+                                          // only extended frames (EFF bit).
+
+  if ((unsigned char) pgn == 0)
+  { // PDU 1 (assumed if 8 lowest bits of the PGN are 0)
+    canId += dst << 8;
+    canId += pgn << 8;
+    canId += prio << 26;
+  }
+  else
+  { // PDU 2
+    canId += pgn << 8;
+    canId += prio << 26;
+  }
+
+  return canId;
+}

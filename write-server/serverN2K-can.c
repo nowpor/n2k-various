@@ -1,25 +1,3 @@
-/*
-
-Reads raw n2k ASCII data from stdin and writes it to a Linux SocketCAN device (e.g. can0).
-
-(C) 2009-2015, Kees Verruijt, Harlingen, The Netherlands.
-
-This file is part of CANboat.
-
-CANboat is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-CANboat is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with CANboat.  If not, see <http://www.gnu.org/licenses/>.
-
-*/
 #define _GNU_SOURCE
 #include <linux/can.h>
 #include <linux/can/raw.h>
@@ -37,17 +15,39 @@ along with CANboat.  If not, see <http://www.gnu.org/licenses/>.
 
 #define PORT     55560
 #define MAXLINE  2000
+
+#define DATE_LENGTH 60
+//#define FASTPACKET_INDEX (0)
+#define FASTPACKET_SIZE (1)
+#define FASTPACKET_BUCKET_0_SIZE (6)
+#define FASTPACKET_BUCKET_N_SIZE (7)
+//#define FASTPACKET_BUCKET_0_OFFSET (2)
+//#define FASTPACKET_BUCKET_N_OFFSET (1)
+#define FASTPACKET_MAX_INDEX (0x1f)
+#define FASTPACKET_MAX_SIZE (FASTPACKET_BUCKET_0_SIZE + FASTPACKET_BUCKET_N_SIZE * (FASTPACKET_MAX_INDEX - 1))
+
 #define SRC      4
 
 #define GLOBALS
-#include "common.h"
-#include "pgn.h"
+//#include "common.h"
+//#include "pgn.h"
+
+typedef struct
+{
+  char     timestamp[DATE_LENGTH];
+  uint8_t  prio;
+  uint32_t pgn;
+  uint8_t  dst;
+  uint8_t  src;
+  uint8_t  len;
+  uint8_t  data[FASTPACKET_MAX_SIZE];
+} RawMessage;
 
 static int  openCanDevice(char *device, int *socketc);
 static void writeRawPGNToCanSocket(RawMessage *msg, int socketc);
 static void sendCanFrame(struct can_frame *frame, int socketc);
 static void sendN2kFastPacket(RawMessage *msg, struct can_frame *frame, int socketc);
-unsigned long time_diff(struct timeval x , struct timeval y, char *timestamp);
+unsigned int getCanIdFromISO11783Bits(unsigned int prio, unsigned int pgn, unsigned int src, unsigned int dst);
 
 int main(int argc, char **argv)
 {
@@ -62,7 +62,7 @@ int main(int argc, char **argv)
 
   struct sockaddr_in servaddr , cliaddr;
 
-  setProgName(argv[0]);
+//  setProgName(argv[0]);
   if (argc != 2)
   {
     puts("Usage: socketcan-writer <can-device>");
@@ -96,8 +96,6 @@ int main(int argc, char **argv)
                 }
 
 
-  prevFrameTime.tv_sec = 0;
-  prevFrameTime.tv_usec = 0;
 
   int len, n;
   while (1) {
@@ -114,43 +112,6 @@ int main(int argc, char **argv)
     memcpy(m.data, msg+8, m.len);
   writeRawPGNToCanSocket(&m, socketc);
   }
-/*
-  while (fgets(msg, sizeof(msg) - 1, file))
-  {
-
-    RawMessage m;
-    if (parseRawFormatFast(msg, &m, false))
-    {
-      continue; // Parsing failed -> skip the line
-    }
-    if (strlen(m.timestamp) >= 19)
-    {
-      m.timestamp[10] = 'T'; // to support 'T', '-' and ' ' separators
-      memset(&ctime, 0, sizeof(struct tm));
-      milliSecond = strptime(m.timestamp, "%Y-%m-%dT%H:%M:%S", &ctime);
-      if ((milliSecond != NULL) && (milliSecond - m.timestamp >= 19)) // convert in tm struct => OK
-      {
-        frameTime.tv_sec = mktime(&ctime);
-        frameTime.tv_usec = (sscanf(milliSecond, ".%3ld", &frameTime.tv_usec) == 1) ? frameTime.tv_usec * 1000 : 0;
-        usWait = ((prevFrameTime.tv_sec == 0) && (prevFrameTime.tv_usec == 0)) ? 0 : time_diff(prevFrameTime, frameTime, m.timestamp);
-        prevFrameTime = frameTime;
-      }
-      else // convert in tm struct failed
-      {
-        usWait = 0;
-      }
-    }
-    else // bad timestamp format YYYY-mm-dd[T|-| ]HH:MM:SS[.xxx] & min length 19 chrs
-    {
-      usWait = 0;
-    }
-    if (usWait > 0)
-    {
-        usleep(usWait);
-    }
-    writeRawPGNToCanSocket(&m, socketc);
-  }
-*/
   close(sockfd);
   close(socketc);
   exit(0);
@@ -198,7 +159,7 @@ static void writeRawPGNToCanSocket(RawMessage *msg, int socket)
 
   if (msg->pgn >= (1 << 18)) // PGNs can't have more than 18 bits, otherwise it overwrites priority bits
   {
-    logError("Invalid PGN, too big (0x%x). Skipping.\n", msg->pgn);
+    //logError("Invalid PGN, too big (0x%x). Skipping.\n", msg->pgn);
     return;
   }
 
@@ -263,19 +224,25 @@ static void sendN2kFastPacket(RawMessage *msg, struct can_frame *frame, int sock
   }
 }
 
-unsigned long time_diff(struct timeval x , struct timeval y, char *timestamp)
+/*
+  This does the opposite from getISO11783BitsFromCanId: given n2k fields produces the extended frame CAN id
+*/
+unsigned int getCanIdFromISO11783Bits(unsigned int prio, unsigned int pgn, unsigned int src, unsigned int dst)
 {
-  double x_ms , y_ms , diff;
+  unsigned int canId = src | 0x80000000U; // src bits are the lowest ones of the CAN ID. Also set the highest bit to 1 as n2k uses
+                                          // only extended frames (EFF bit).
 
-  x_ms = (double)x.tv_sec*1000000 + (double)x.tv_usec;
-  y_ms = (double)y.tv_sec*1000000 + (double)y.tv_usec;
-
-  diff = (double)y_ms - (double)x_ms;
-  if (diff < 0.0)
-  {
-    logError("Timestamp back in time at %s\n", timestamp);
-    return 0;
+  if ((unsigned char) pgn == 0)
+  { // PDU 1 (assumed if 8 lowest bits of the PGN are 0)
+    canId += dst << 8;
+    canId += pgn << 8;
+    canId += prio << 26;
+  }
+  else
+  { // PDU 2
+    canId += pgn << 8;
+    canId += prio << 26;
   }
 
-  return (unsigned long)diff;
+  return canId;
 }

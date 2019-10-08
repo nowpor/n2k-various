@@ -17,20 +17,15 @@
 #define MAXLINE  2000
 
 #define DATE_LENGTH 60
-//#define FASTPACKET_INDEX (0)
 #define FASTPACKET_SIZE (1)
 #define FASTPACKET_BUCKET_0_SIZE (6)
 #define FASTPACKET_BUCKET_N_SIZE (7)
-//#define FASTPACKET_BUCKET_0_OFFSET (2)
-//#define FASTPACKET_BUCKET_N_OFFSET (1)
 #define FASTPACKET_MAX_INDEX (0x1f)
 #define FASTPACKET_MAX_SIZE (FASTPACKET_BUCKET_0_SIZE + FASTPACKET_BUCKET_N_SIZE * (FASTPACKET_MAX_INDEX - 1))
 
 #define SRC      4
 
 #define GLOBALS
-//#include "common.h"
-//#include "pgn.h"
 
 typedef struct
 {
@@ -43,6 +38,7 @@ typedef struct
   uint8_t  data[FASTPACKET_MAX_SIZE];
 } RawMessage;
 
+static int openPortUDP(int *sockfd, int port);
 static int  openCanDevice(char *device, int *socketc);
 static void writeRawPGNToCanSocket(RawMessage *msg, int socketc);
 static void sendCanFrame(struct can_frame *frame, int socketc);
@@ -51,18 +47,10 @@ unsigned int getCanIdFromISO11783Bits(unsigned int prio, unsigned int pgn, unsig
 
 int main(int argc, char **argv)
 {
-  FILE *file = stdin;
   char           msg[2000];
-  char *         milliSecond;
   int            socketc, sockfd;
-  struct timeval frameTime;
-  struct timeval prevFrameTime;
-  struct tm      ctime;
-  unsigned long  usWait;
 
-  struct sockaddr_in servaddr , cliaddr;
 
-//  setProgName(argv[0]);
   if (argc != 2)
   {
     puts("Usage: socketcan-writer <can-device>");
@@ -74,30 +62,16 @@ int main(int argc, char **argv)
     exit(1);
   }
 
-          // Creating socket file descriptor
-                if ( (sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
-                        perror("socket creation failed");
-                        exit(EXIT_FAILURE);
-                }
 
-                memset(&servaddr, 0, sizeof(servaddr));
-                memset(&cliaddr, 0, sizeof(cliaddr));
+  if(openPortUDP(&sockfd,PORT))
+  {
+    exit(1);
+  }
 
-        // Filling server information
-                servaddr.sin_family = AF_INET; // IPv4
-                servaddr.sin_addr.s_addr = INADDR_ANY;
-                servaddr.sin_port = htons(PORT);
-        // Bind the socket with the server address
-                if ( bind(sockfd, (const struct sockaddr *)&servaddr,
-                 sizeof(servaddr)) < 0 )
-                {
-                        perror("bind failed");
-                        exit(EXIT_FAILURE);
-                }
-
-
-
+  struct sockaddr_in cliaddr;
+   memset(&cliaddr, 0, sizeof(cliaddr));
   int len, n;
+
   while (1) {
         n = recvfrom(sockfd, (char *)msg, MAXLINE,
                 MSG_WAITALL, ( struct sockaddr *) &cliaddr,&len);
@@ -115,6 +89,35 @@ int main(int argc, char **argv)
   close(sockfd);
   close(socketc);
   exit(0);
+}
+
+static int openPortUDP(int *sockfd, int port)
+{
+  struct sockaddr_in servaddr;
+
+          // Creating socket file descriptor
+                if ( (*sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+                        perror("socket creation failed");
+                        //exit(EXIT_FAILURE);
+			return 1;
+                }
+
+                memset(&servaddr, 0, sizeof(servaddr));
+
+        // Filling server information
+                servaddr.sin_family = AF_INET; // IPv4
+                servaddr.sin_addr.s_addr = INADDR_ANY;
+                servaddr.sin_port = htons(port);
+        // Bind the socket with the server address
+                if ( bind(*sockfd, (const struct sockaddr *)&servaddr,
+                 sizeof(servaddr)) < 0 )
+                {
+                        perror("bind failed");
+                        //exit(EXIT_FAILURE);
+			return 1;
+                }
+
+ return 0;
 }
 
 /*
